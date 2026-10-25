@@ -17,6 +17,19 @@ class DocType(str, Enum):
     RECORDINGS = "Recordings"
 
 
+class InboundEmail(BaseModel):
+    """A request email from the inbox."""
+
+    uid: str  # the mailbox's id for the message, used to mark it as read
+    message_id: str  # the email's own id, used to thread our reply
+    references: str = ""  # earlier message ids in the thread
+    sender: str
+    sender_name: str = ""
+    subject: str
+    body: str
+    auto_submitted: bool = False  # True for auto-replies (out-of-office etc.), which we never answer
+
+
 class ParsedRequest(BaseModel):
     """A checked request, ready for the scraper."""
 

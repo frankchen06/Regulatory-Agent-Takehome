@@ -1,8 +1,82 @@
-"""Gmail inbox polling and replies. For now: writing the reply text."""
+"""Reads request emails from Gmail, and sends the replies.
 
+- Reading: only unread emails sent to yourname+uarb@gmail.com. The rest of the inbox is never touched.
+- Sending: a reply in the same thread, with the ZIP attached. Replies to it come back to +uarb.
+- Writing: the reply text itself, built only from facts we scraped.
+"""
+
+import html
+import re
+import smtplib
 from datetime import date
+from email.message import EmailMessage
+from email.utils import formataddr
+from pathlib import Path
 
-from src.models import DocType, FetchResult, ZipResult
+from imap_tools import AND, MailBox, MailMessageFlags
+
+from src.config import IMAP_HOST, SMTP_HOST, SMTP_PORT, settings
+from src.models import DocType, FetchResult, InboundEmail, ZipResult
+
+
+def fetch_new_requests(limit: int = 10) -> list[InboundEmail]:
+    """Return unread emails sent to the agent's address, oldest first. Doesn't mark them as read."""
+    with MailBox(IMAP_HOST).login(settings.gmail_address, settings.gmail_app_password) as mailbox:
+        messages = mailbox.fetch(AND(to=settings.agent_address, seen=False), mark_seen=False,
+                                 limit=limit, reverse=False)
+        return [_to_inbound(msg) for msg in messages]
+
+
+def mark_handled(uid: str) -> None:
+    """Mark a request as read, so it isn't picked up again."""
+    with MailBox(IMAP_HOST).login(settings.gmail_address, settings.gmail_app_password) as mailbox:
+        mailbox.flag(uid, MailMessageFlags.SEEN, True)
+
+
+def send_reply(original: InboundEmail, body: str, attachment: Path | None = None) -> None:
+    """Reply in the same thread as `original`, optionally with a file attached."""
+    msg = EmailMessage()
+    # Gmail always sends from the account's main address, so we can't send *from* +uarb.
+    # Reply-To makes the user's next reply come back to the agent's address instead.
+    msg["From"] = formataddr(("UARB Document Agent", settings.gmail_address))
+    msg["Reply-To"] = settings.agent_address
+    msg["To"] = original.sender
+    msg["Subject"] = original.subject if original.subject.lower().startswith("re:") else f"Re: {original.subject}"
+    # These two headers are what make email apps show our reply in the same thread.
+    if original.message_id:
+        msg["In-Reply-To"] = original.message_id
+        msg["References"] = f"{original.references} {original.message_id}".strip()
+    # Marks this as automatic, so other mail bots (and our own inbox check) don't reply to it.
+    msg["Auto-Submitted"] = "auto-replied"
+    msg.set_content(body)
+    if attachment:
+        msg.add_attachment(attachment.read_bytes(), maintype="application", subtype="zip",
+                           filename=attachment.name)
+
+    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as smtp:
+        smtp.login(settings.gmail_address, settings.gmail_app_password)
+        smtp.send_message(msg)
+
+
+def _to_inbound(msg) -> InboundEmail:
+    headers = msg.headers  # header names are lower-case; each value is a tuple
+    body = msg.text or _html_to_text(msg.html)
+    return InboundEmail(
+        uid=msg.uid,
+        message_id=headers.get("message-id", ("",))[0].strip(),
+        references=headers.get("references", ("",))[0].strip(),
+        sender=msg.from_,
+        sender_name=msg.from_values.name if msg.from_values else "",
+        subject=msg.subject or "",
+        body=body,
+        auto_submitted=headers.get("auto-submitted", ("no",))[0].strip().lower() != "no",
+    )
+
+
+def _html_to_text(markup: str) -> str:
+    """Rough plain text from an HTML-only email: drop tags, keep line breaks."""
+    text = re.sub(r"(?i)<br\s*/?>|</p>|</div>", "\n", markup or "")
+    return html.unescape(re.sub(r"<[^>]+>", "", text)).strip()
 
 SINGULAR = {
     DocType.EXHIBITS: "Exhibit",

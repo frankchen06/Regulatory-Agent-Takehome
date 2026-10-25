@@ -1,11 +1,13 @@
-"""Entry point. For now, two commands for trying each part by hand:
+"""Entry point. For now, three commands for trying each part by hand:
 - `python -m src.main parse "Can you send me Exhibits for M12205?"` shows what the parser understood.
-- `python -m src.main fetch M12205 "Other Documents"` scrapes, zips, and previews the reply email."""
+- `python -m src.main fetch M12205 "Other Documents"` scrapes, zips, and previews the reply email.
+- `python -m src.main inbox` lists unread requests sent to the agent (doesn't mark them as read)."""
 
 import argparse
 import logging
 
-from src.mailer import build_reply_body
+from src.config import settings
+from src.mailer import build_reply_body, fetch_new_requests
 from src.models import DocType
 from src.parser import parse_request
 from src.scraper import fetch_matter
@@ -21,10 +23,16 @@ def main() -> None:
     parse = sub.add_parser("parse", help="show what the agent understands from an email")
     parse.add_argument("body", help="the email text")
     parse.add_argument("--subject", default="")
+    sub.add_parser("inbox", help="list unread requests sent to the agent, without marking them as read")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    if args.command == "parse":
+    if args.command == "inbox":
+        requests = fetch_new_requests()
+        print(f"{len(requests)} unread request(s) to {settings.agent_address}")
+        for r in requests:
+            print(f"- from {r.sender} | {r.subject!r} | {r.body.strip()[:80]!r}")
+    elif args.command == "parse":
         print(parse_request(args.subject, args.body).model_dump_json(indent=2))
     elif args.command == "fetch":
         result = fetch_matter(args.matter_number.upper(), DocType(args.doc_type))
