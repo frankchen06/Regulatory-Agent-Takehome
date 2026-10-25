@@ -28,6 +28,7 @@ class InboundEmail(BaseModel):
     subject: str
     body: str
     auto_submitted: bool = False  # True for auto-replies (out-of-office etc.), which we never answer
+    bulk: bool = False  # True for mailing lists and newsletters, which we never answer
 
 
 class ParsedRequest(BaseModel):

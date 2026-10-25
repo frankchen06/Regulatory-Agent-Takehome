@@ -1,6 +1,7 @@
 """Reads request emails from Gmail, and sends the replies.
 
-- Reading: only unread emails sent to yourname+uarb@gmail.com. The rest of the inbox is never touched.
+- Reading: only emails sent to yourname+uarb@gmail.com that don't have the "UARB-handled" label yet.
+  The rest of the inbox is never touched, and opening a request in Gmail doesn't hide it from the agent.
 - Sending: a reply in the same thread, with the ZIP attached. Replies to it come back to +uarb.
 - Writing: the reply text itself, built only from facts we scraped.
 """
@@ -13,23 +14,29 @@ from email.message import EmailMessage
 from email.utils import formataddr
 from pathlib import Path
 
-from imap_tools import AND, MailBox, MailMessageFlags
+from imap_tools import MailBox, MailMessageFlags
 
-from src.config import IMAP_HOST, SMTP_HOST, SMTP_PORT, settings
+from src.config import HANDLED_LABEL, IMAP_HOST, SMTP_HOST, SMTP_PORT, settings
 from src.models import DocType, FetchResult, InboundEmail, ZipResult
+
+SIGNATURE = "UARB Document Agent"
 
 
 def fetch_new_requests(limit: int = 10) -> list[InboundEmail]:
-    """Return unread emails sent to the agent's address, oldest first. Doesn't mark them as read."""
+    """Return emails sent to the agent's address that haven't been handled yet, oldest first."""
+    # X-GM-RAW lets us use Gmail's own search syntax, including labels.
+    query = f'X-GM-RAW "to:{settings.agent_address} -label:{HANDLED_LABEL}"'
     with MailBox(IMAP_HOST).login(settings.gmail_address, settings.gmail_app_password) as mailbox:
-        messages = mailbox.fetch(AND(to=settings.agent_address, seen=False), mark_seen=False,
-                                 limit=limit, reverse=False)
+        messages = mailbox.fetch(query, mark_seen=False, limit=limit, reverse=False)
         return [_to_inbound(msg) for msg in messages]
 
 
 def mark_handled(uid: str) -> None:
-    """Mark a request as read, so it isn't picked up again."""
+    """Label a request as handled (and mark it read), so it isn't picked up again."""
     with MailBox(IMAP_HOST).login(settings.gmail_address, settings.gmail_app_password) as mailbox:
+        status, _ = mailbox.client.uid("STORE", uid, "+X-GM-LABELS", f"({HANDLED_LABEL})")
+        if status != "OK":
+            raise RuntimeError(f"could not label message {uid} as {HANDLED_LABEL}")
         mailbox.flag(uid, MailMessageFlags.SEEN, True)
 
 
@@ -70,6 +77,7 @@ def _to_inbound(msg) -> InboundEmail:
         subject=msg.subject or "",
         body=body,
         auto_submitted=headers.get("auto-submitted", ("no",))[0].strip().lower() != "no",
+        bulk="list-id" in headers or headers.get("precedence", ("",))[0].strip().lower() in ("bulk", "list", "junk"),
     )
 
 
@@ -87,7 +95,13 @@ SINGULAR = {
 }
 
 
-def build_reply_body(result: FetchResult, zipped: ZipResult | None, name: str = "there") -> str:
+def build_message_body(message: str, name: str = "there") -> str:
+    """A short reply with no attachment, e.g. asking for a missing matter number."""
+    return "\n\n".join([f"Hi {name},", message, SIGNATURE])
+
+
+def build_reply_body(result: FetchResult, zipped: ZipResult | None, name: str = "there",
+                     note: str | None = None) -> str:
     """Write the reply email, following the example in the brief. Only includes facts we scraped."""
     m = result.metadata
     n_wanted = m.counts[result.doc_type]
@@ -125,7 +139,7 @@ def build_reply_body(result: FetchResult, zipped: ZipResult | None, name: str = 
     paragraphs.append(" ".join(summary))
 
     # 4. Anything we couldn't include, so the user knows the ZIP isn't the whole picture.
-    notes = []
+    notes = [note] if note else []
     if zipped and zipped.skipped:
         notes.append("These were too large to fit in one email: "
                      + ", ".join(f"{d.doc_number} ({d.title})" for d in zipped.skipped) + ".")
@@ -140,7 +154,7 @@ def build_reply_body(result: FetchResult, zipped: ZipResult | None, name: str = 
                  for d in zipped.included]
         paragraphs.append("Attached:\n" + "\n".join(lines))
 
-    paragraphs.append("UARB Document Agent")
+    paragraphs.append(SIGNATURE)
     return "\n\n".join(paragraphs)
 
 

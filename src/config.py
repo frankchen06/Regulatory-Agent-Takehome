@@ -15,6 +15,7 @@ IMAP_HOST = "imap.gmail.com"
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
 AGENT_TAG = "uarb"  # the agent only reads mail sent to yourname+uarb@gmail.com
+HANDLED_LABEL = "UARB-handled"  # Gmail label the agent adds to each request once it's dealt with
 
 
 class Settings(BaseSettings):
@@ -23,7 +24,6 @@ class Settings(BaseSettings):
     gmail_address: str = ""
     gmail_app_password: str = ""  # Gmail App Password, not the account password
     anthropic_api_key: str = ""
-    allowed_senders: list[str] = []  # only these addresses get replies; empty means nobody does
     headless: bool = True  # set HEADLESS=false to watch the browser
 
     @property
