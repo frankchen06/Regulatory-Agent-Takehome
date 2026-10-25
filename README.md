@@ -2,19 +2,6 @@
 
 An email agent for the Nova Scotia Utility and Review Board's public documents database. Email it a matter number and a document type. It downloads up to 10 of those documents, zips them, and replies with the ZIP plus a summary of the matter.
 
-**You send:**
-> Hi Agent, can you give me Key Documents from M12205? Thanks!
-
-**It replies (about 20 seconds later), with `M12205_Key_Documents.zip` attached:**
-> Hi Frank,
->
-> M12205 is about Halifax Regional Water Commission - Windsor Street Exchange Redevelopment Project - $69,275,000. It relates to Capital Expenditure Approvals within the Water category. The matter had an initial filing on April 7, 2025 and a final filing on October 23, 2025. Its status is Closed, with the outcome: Directions given. I found 13 Exhibits, 6 Key Documents, 43 Other Documents, and no Transcripts or Recordings (62 files in total). I downloaded all 6 Key Documents and am attaching them as a ZIP here.
->
-> Attached:
-> - 97289: Notice of Paper Hearing (April 11, 2025)
-> - 97291: Hearing Order (April 11, 2025)
-> - …
-
 ---
 
 # Talk to the Agent
@@ -87,6 +74,39 @@ Inbox poller → Parser → Scraper → Zipper → Reply sender
    - Include document counts
    - Reply with a helpful error if something goes wrong (bad matter number, no documents, etc.)
 
+---
+
+
+# How It Works
+
+```mermaid
+---
+config:
+  look: handDrawn
+  theme: neutral
+---
+flowchart LR
+    U(["Anyone sends an email"]) -->|"to the +uarb address"| G[("Gmail inbox")]
+    G -->|"new requests<br/>(every 5 min)"| P
+
+    subgraph A ["GitHub Actions: run --once"]
+        direction LR
+        P["Parser<br/>Claude Haiku + regex"] --> S["Scraper<br/>Playwright"]
+        S --> Z["Zipper"]
+        Z --> M["Mailer"]
+    end
+
+    S <-->|"search, read details,<br/>download ≤ 10 files"| W[("UARB website")]
+    M -->|"reply + ZIP"| U
+    M -.->|"label UARB-handled"| G
+```
+
+1. **Inbox:** every 5 minutes (every 30s when run locally), the agent checks for emails sent to `+uarb` that don't have the `UARB-handled` label yet. Automatic mail (auto-replies, mailing lists, no-reply senders) is skipped.
+2. **Parser:** Claude reads the email and a regex checks the result, giving `{ matter: M12205, type: Key Documents }`.
+3. **Scraper:** Playwright searches the matter on the UARB site, reads its details and tab counts, and downloads up to 10 files.
+4. **Zipper:** packs them into one ZIP that fits in an email.
+5. **Mailer:** replies in the same thread with the ZIP and the summary, then labels the request `UARB-handled`.
+
 ### Key Decisions
 - **Playwright for the browser.** The site is a FileMaker WebDirect app, so there's no plain HTML to scrape. Everything renders with JavaScript.
 - **LLM only for parsing the email.** Metadata comes straight from the page, so numbers and dates can't be hallucinated.
@@ -102,34 +122,6 @@ Inbox poller → Parser → Scraper → Zipper → Reply sender
 - **smtplib** (built-in) to send replies
 - **zipfile** (built-in) to build the ZIP
 - **tenacity** to retry flaky page loads
-
----
-
-
-# How It Works
-
-```
-Email to yourname+uarb@gmail.com
-  → main.py        checks the inbox (every 5 min on GitHub Actions, every 30s locally)
-                   for requests without the "UARB-handled" label
-  → orchestrator   skips machines (auto-replies, mailing lists, no-reply), then for each request:
-      → parser     Claude + regex → { matter: M12205, type: Key Documents }
-      → scraper    Playwright: search matter → read details + tab counts → download ≤ 10 files
-      → zipper     one ZIP, kept under Gmail's size limit
-      → mailer     reply in the same thread with the ZIP and the summary
-  → label the request "UARB-handled"
-```
-
-| File | What it does |
-|---|---|
-| `src/main.py` | Commands (`run`, `inbox`, `parse`, `fetch`) and the inbox loop |
-| `src/orchestrator.py` | Handles one email from start to finish, with a reply for every outcome |
-| `src/parser.py` | Turns the email into a matter number and document type |
-| `src/scraper.py` | Drives the UARB site: search, metadata, tab counts, downloads |
-| `src/zipper.py` | Builds the ZIP within the size budget |
-| `src/mailer.py` | Reads requests from Gmail, sends replies, and writes the reply text |
-| `src/models.py` | Shared data shapes (Pydantic), validated at each step |
-| `src/config.py` | Secrets from `.env`, everything else as constants |
 
 ---
 
@@ -186,20 +178,3 @@ Try each part on its own:
 4. The reply arrives in the sender's inbox in the same thread, with a ZIP of 10 PDFs.
 
 ---
-
-# When Things Go Wrong
-
-Every request gets an answer. The only exception is automatic mail, which is never answered, to avoid reply loops.
-
-| Situation | What the agent does |
-|---|---|
-| No matter number in the email | Asks for one, with an example |
-| No document type | Asks which type, listing the five options |
-| Two matters or two types in one email | Handles the first, and says so in the reply |
-| Matter doesn't exist | "I couldn't find matter M99999…" |
-| Requested tab is empty | Sends the matter summary and says there's nothing to attach |
-| Files too big for one email | Attaches what fits (under 18 MB) and lists what was left out |
-| One file fails to download | Sends the rest and lists the one that failed |
-| Website down or broken | Retries once, then replies asking them to try again later |
-| Out-of-office, mailing list, no-reply sender | Ignored |
-| Sending the reply fails | Leaves the email unhandled and retries on the next check (up to 3 times) |
