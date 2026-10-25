@@ -84,21 +84,22 @@ Inbox poller → Parser → Scraper → Zipper → Reply sender
 config:
   look: handDrawn
   theme: neutral
+  themeVariables:
+    fontSize: 18px
 ---
-flowchart LR
-    U(["Anyone sends an email"]) -->|"to the +uarb address"| G[("Gmail inbox")]
-    G -->|"new requests<br/>(every 5 min)"| P
+flowchart TB
+    U(["Anyone emails the +uarb address"]) --> G[("Gmail inbox")]
+    G -->|"checked every 5 min"| P
 
-    subgraph A ["GitHub Actions: run --once"]
-        direction LR
+    subgraph A ["GitHub Actions"]
         P["Parser<br/>Claude Haiku + regex"] --> S["Scraper<br/>Playwright"]
         S --> Z["Zipper"]
         Z --> M["Mailer"]
     end
 
-    S <-->|"search, read details,<br/>download ≤ 10 files"| W[("UARB website")]
-    M -->|"reply + ZIP"| U
-    M -.->|"label UARB-handled"| G
+    S <-->|"search + download"| W[("UARB website")]
+    M -.->|"label as handled"| G
+    M --> R(["Reply + ZIP in the sender's inbox"])
 ```
 
 1. **Inbox:** every 5 minutes (every 30s when run locally), the agent checks for emails sent to `+uarb` that don't have the `UARB-handled` label yet. Automatic mail (auto-replies, mailing lists, no-reply senders) is skipped.
