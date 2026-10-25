@@ -1,11 +1,13 @@
-"""Entry point. For now: `python -m src.main fetch M12205 "Other Documents"` scrapes, zips,
-and prints the reply email that would be sent."""
+"""Entry point. For now, two commands for trying each part by hand:
+- `python -m src.main parse "Can you send me Exhibits for M12205?"` shows what the parser understood.
+- `python -m src.main fetch M12205 "Other Documents"` scrapes, zips, and previews the reply email."""
 
 import argparse
 import logging
 
 from src.mailer import build_reply_body
 from src.models import DocType
+from src.parser import parse_request
 from src.scraper import fetch_matter
 from src.zipper import zip_documents
 
@@ -16,10 +18,15 @@ def main() -> None:
     fetch = sub.add_parser("fetch", help="scrape one matter, zip up to 10 files, and preview the reply")
     fetch.add_argument("matter_number", help="e.g. M12205")
     fetch.add_argument("doc_type", choices=[d.value for d in DocType])
+    parse = sub.add_parser("parse", help="show what the agent understands from an email")
+    parse.add_argument("body", help="the email text")
+    parse.add_argument("--subject", default="")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    if args.command == "fetch":
+    if args.command == "parse":
+        print(parse_request(args.subject, args.body).model_dump_json(indent=2))
+    elif args.command == "fetch":
         result = fetch_matter(args.matter_number.upper(), DocType(args.doc_type))
         zipped = None
         if result.documents:

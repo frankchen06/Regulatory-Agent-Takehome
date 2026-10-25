@@ -17,6 +17,20 @@ class DocType(str, Enum):
     RECORDINGS = "Recordings"
 
 
+class ParsedRequest(BaseModel):
+    """A checked request, ready for the scraper."""
+
+    matter_number: str = Field(pattern=MATTER_PATTERN)
+    doc_type: DocType
+    note: str | None = None  # e.g. "You also asked for Transcripts; I can only send one type per email."
+
+
+class NeedsClarification(BaseModel):
+    """The email didn't say clearly enough what to fetch. `reason` is shown to the user."""
+
+    reason: str
+
+
 class MatterMetadata(BaseModel):
     matter_number: str = Field(pattern=MATTER_PATTERN)
     title: str
