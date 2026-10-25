@@ -15,7 +15,7 @@ import logging
 import time
 
 from src.config import POLL_INTERVAL_SECONDS, settings
-from src.mailer import build_reply_body, fetch_new_requests, mark_handled
+from src.mailer import build_reply_body, fetch_new_requests, mark_handled, mask
 from src.models import DocType
 from src.orchestrator import process
 from src.parser import parse_request
@@ -40,7 +40,7 @@ def run(once: bool) -> None:
             requests = []
 
         for email in requests:
-            log.info("new email from %s: %r", email.sender, email.subject)
+            log.info("new email from %s", mask(email.sender))
             try:
                 outcome = process(email)
             except Exception:

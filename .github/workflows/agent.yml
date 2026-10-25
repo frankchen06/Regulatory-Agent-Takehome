@@ -1,0 +1,42 @@
+# Runs the agent on GitHub's servers so anyone can email it, without a laptop staying on.
+# Every 5 minutes: install everything, answer any new request emails, then exit.
+# The Gmail "UARB-handled" label remembers what's been answered, so each run starts fresh.
+
+name: UARB agent
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"  # every 5 minutes, the shortest GitHub allows (runs can start late)
+  workflow_dispatch:  # adds a "Run workflow" button to run it right away
+
+# Only one run at a time. Two overlapping runs could both answer the same email
+# before either one labels it as handled.
+concurrency:
+  group: uarb-agent
+  cancel-in-progress: false
+
+jobs:
+  answer-emails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Answer new emails
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          HEADLESS: "true"
+        run: python -m src.main run --once

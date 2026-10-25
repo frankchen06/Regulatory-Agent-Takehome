@@ -65,6 +65,12 @@ def send_reply(original: InboundEmail, body: str, attachment: Path | None = None
         smtp.send_message(msg)
 
 
+def mask(address: str) -> str:
+    """Hide most of an email address for logs, which are public on GitHub: jane.doe@x.com -> ja***@x.com"""
+    local, _, domain = address.partition("@")
+    return f"{local[:2]}***@{domain}"
+
+
 def _to_inbound(msg) -> InboundEmail:
     headers = msg.headers  # header names are lower-case; each value is a tuple
     body = msg.text or _html_to_text(msg.html)

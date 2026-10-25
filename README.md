@@ -17,6 +17,28 @@ An email agent for the Nova Scotia Utility and Review Board's public documents d
 
 ---
 
+# Talk to the Agent
+
+The agent is live. Email **frank.chen.ziy+uarb@gmail.com** from any address, for example:
+> Hi Agent, can you give me Other Documents files from M12383? Thanks!
+
+**How long it takes:** usually **5–15 minutes**.
+- The agent runs on GitHub Actions and checks for new emails every 5 minutes.
+- GitHub sometimes starts scheduled runs late, so a reply can occasionally take longer.
+- Once your email is picked up, the request itself takes under a minute.
+
+### How it's deployed
+[`.github/workflows/agent.yml`](.github/workflows/agent.yml) runs the agent on GitHub's servers, so it answers emails without a laptop staying on.
+- **Every 5 minutes** it starts a fresh machine, installs everything, runs `run --once` to answer new emails, and exits.
+- **No server or database is needed.** The Gmail `UARB-handled` label remembers which emails have been answered, so every run picks up where the last one left off.
+- **Only one run happens at a time**, so the same email is never answered twice.
+- **Only emails sent to the `+uarb` address are read.** Everything else in the inbox is never opened.
+
+**Things to know:**
+- **For faster replies, run it locally** (see [Running It](#running-it)): it checks every 30 seconds and replies in about a minute. Turn off the GitHub workflow first (**Actions → UARB agent → ⋯ → Disable workflow**), or both copies may answer the same email.
+
+---
+
 # Initial System Design
 
 I broke the problem into independent components so the agent could build and test each step quickly.
@@ -88,7 +110,8 @@ Inbox poller → Parser → Scraper → Zipper → Reply sender
 
 ```
 Email to yourname+uarb@gmail.com
-  → main.py        checks the inbox every 30s for requests without the "UARB-handled" label
+  → main.py        checks the inbox (every 5 min on GitHub Actions, every 30s locally)
+                   for requests without the "UARB-handled" label
   → orchestrator   skips machines (auto-replies, mailing lists, no-reply), then for each request:
       → parser     Claude + regex → { matter: M12205, type: Key Documents }
       → scraper    Playwright: search matter → read details + tab counts → download ≤ 10 files

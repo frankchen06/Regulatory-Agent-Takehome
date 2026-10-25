@@ -64,7 +64,7 @@ def parse_request(subject: str, body: str) -> ParsedRequest | NeedsClarification
     # 2. Ask Claude. If that fails for any reason, fall back to keyword matching.
     extraction = _ask_claude(text) or _match_keywords(text)
     if extraction.problem:
-        log.info("parser note: %s", extraction.problem)  # logged only; replies use our own wording
+        log.debug("parser note: %s", extraction.problem)  # describes the email, so kept out of public logs
 
     # 3. Check the matter number really appears in the email.
     in_email = list(dict.fromkeys(m.upper() for m in MATTER_RE.findall(text)))

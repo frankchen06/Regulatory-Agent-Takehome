@@ -9,7 +9,7 @@ import re
 
 from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_fixed
 
-from src.mailer import build_message_body, build_reply_body, send_reply
+from src.mailer import build_message_body, build_reply_body, mask, send_reply
 from src.models import DocType, FetchResult, InboundEmail, NeedsClarification
 from src.parser import parse_request
 from src.scraper import MatterNotFound, fetch_matter
@@ -30,7 +30,7 @@ def process(email: InboundEmail) -> str:
     if email.bulk:
         return "skipped: mailing list or bulk email"
     if NO_REPLY_RE.search(email.sender):
-        return f"skipped: {email.sender} is a no-reply address"
+        return f"skipped: {mask(email.sender)} is a no-reply address"
 
     name = email.sender_name.split()[0] if email.sender_name.strip() else "there"
 
