@@ -47,3 +47,9 @@ class FetchResult(BaseModel):
     doc_type: DocType
     documents: list[Document]
     failed: list[str] = []  # doc numbers whose download failed
+
+
+class ZipResult(BaseModel):
+    path: Path
+    included: list[Document]
+    skipped: list[Document] = []  # left out because the email would be too big
