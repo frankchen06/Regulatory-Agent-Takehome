@@ -15,6 +15,7 @@ import re
 import time
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import unquote_plus
 
 from playwright.sync_api import Locator, Page, Route, sync_playwright
 
@@ -26,7 +27,6 @@ log = logging.getLogger(__name__)
 VIEWPORT = {"width": 1440, "height": 900}
 TIMEOUT_MS = 30_000
 TAB_RE = re.compile(r"^(Exhibits|Key Documents|Other Documents|Transcripts|Recordings) - (\d+)$")
-DOC_NO_RE = re.compile(r"^\d{5,6}$")
 DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 EXT_RE = re.compile(r"^\.\w{2,4}$")
 FILE_BUTTON_RE = re.compile(r"\.\w{2,4}$")  # popup file buttons are named like "102674.pdf"
@@ -200,9 +200,9 @@ def _open_tab(page: Page, doc_type: DocType, expected_rows: int) -> None:
 
 
 def _download_documents(page: Page, wanted: int, job_dir: Path) -> tuple[list[Document], list[str]]:
-    """Download the first `wanted` documents in the open tab. Returns (downloaded, failed doc numbers)."""
-    # 1. Note each row's doc number, title and date so we can name the files nicely.
-    rows = _read_rows(page)
+    """Download the first `wanted` documents in the open tab. Returns (downloaded, failed rows)."""
+    # 1. Take a snapshot of the rows' text, so we can look up each file's title and date later.
+    leaves = page.evaluate(JS_LEAVES)
 
     # 2. Catch every file request and keep the response ourselves.
     #    (Playwright's normal download handling cuts these files off partway.)
@@ -211,7 +211,7 @@ def _download_documents(page: Page, wanted: int, job_dir: Path) -> tuple[list[Do
     def capture(route: Route) -> None:
         response = route.fetch(timeout=120_000)
         body = response.body()
-        bodies[route.request.url.rsplit("/", 1)[-1]] = body
+        bodies[_file_name_from_url(route.request.url)] = body
         route.fulfill(response=response, body=body)
 
     page.route("**/dl/**", capture)
@@ -221,13 +221,13 @@ def _download_documents(page: Page, wanted: int, job_dir: Path) -> tuple[list[Do
     documents, failed = [], []
     buttons = _go_get_it_buttons(page)
     for i in range(wanted):
-        row_label = rows[i][0] if i < len(rows) else f"row {i + 1}"
+        row_label = f"row {i + 1}"
         try:
             for name in _download_row(page, buttons.nth(i), bodies):
-                # 4. Save the file as "<doc number> - <title>.pdf". The server names files
-                #    by doc number, so we look up the title by that number, not by row position.
+                # 4. Save the file as "<doc number> - <title>.pdf". The server names each file after
+                #    its row's number ("102674.pdf", "A-1.pdf"), so we look the row up by that name.
                 doc_no, ext = Path(name).stem, Path(name).suffix
-                title, doc_date = next(((t, d) for n, t, d in rows if n == doc_no), ("", None))
+                title, doc_date = _describe_row(leaves, doc_no)
                 path = job_dir / f"{doc_no} - {_safe(title)}{ext}" if title else job_dir / name
                 path.write_bytes(bodies[name])
                 documents.append(Document(doc_number=doc_no, title=title, filed_on=doc_date, path=path))
@@ -259,28 +259,28 @@ def _download_row(page: Page, go_get_it: Locator, bodies: dict[str, bytes]) -> l
     return names
 
 
-def _read_rows(page: Page) -> list[tuple[str, str, date | None]]:
-    """List (doc number, title, date) for each row in the open tab, top to bottom."""
-    leaves = page.evaluate(JS_LEAVES)
+def _describe_row(leaves: list[dict], doc_no: str) -> tuple[str, date | None]:
+    """Find a row by its number (e.g. "102674" or "A-1") and return its (title, date).
 
-    # 1. Every row starts with a doc number (a 5-6 digit number) below the tab bar.
+    Row numbers vary by tab: plain numbers on most, exhibit numbers like "A-1" on Exhibits,
+    sometimes with typos ("A -5"). So we match the exact text instead of guessing a pattern.
+    """
+    # 1. The row's number sits below the tab bar.
     tab_y = max(leaf["y"] for leaf in leaves if TAB_RE.match(leaf["text"]))
-    doc_nos = sorted((leaf for leaf in leaves if leaf["y"] > tab_y and DOC_NO_RE.match(leaf["text"])),
-                     key=lambda leaf: leaf["y"])
+    doc = next((leaf for leaf in leaves if leaf["y"] > tab_y and leaf["text"] == doc_no), None)
+    if doc is None:
+        return "", None
 
-    rows = []
-    for i, doc in enumerate(doc_nos):
-        # 2. A row covers everything from its doc number down to the next row's doc number.
-        band_end = doc_nos[i + 1]["y"] if i + 1 < len(doc_nos) else float("inf")
-        band = [leaf for leaf in leaves if doc["y"] - 5 <= leaf["y"] < band_end - 5]
+    # 2. The title is the text to the right of it on the same line. The date is the MM/DD/YYYY text there.
+    line = [leaf for leaf in leaves if abs(leaf["y"] - doc["y"]) < 10 and leaf["x"] > doc["x"] + doc["w"]]
+    titles = [leaf["text"] for leaf in line if not (DATE_RE.match(leaf["text"]) or EXT_RE.match(leaf["text"]))]
+    dates = [leaf["text"] for leaf in line if DATE_RE.match(leaf["text"])]
+    return max(titles, key=len, default=""), _parse_date(dates[0] if dates else None)
 
-        # 3. The title is the text to the right of the doc number on the same line.
-        #    The date is the text in MM/DD/YYYY format.
-        titles = [leaf["text"] for leaf in band if abs(leaf["y"] - doc["y"]) < 10 and leaf["x"] > doc["x"] + doc["w"]
-                  and not (DATE_RE.match(leaf["text"]) or EXT_RE.match(leaf["text"]))]
-        dates = [leaf["text"] for leaf in band if DATE_RE.match(leaf["text"])]
-        rows.append((doc["text"], max(titles, key=len, default=""), _parse_date(dates[0] if dates else None)))
-    return rows
+
+def _file_name_from_url(url: str) -> str:
+    """".../dl/A+-5.pdf" -> "A -5.pdf". The site encodes spaces in file names as "+"."""
+    return unquote_plus(url.rsplit("/", 1)[-1])
 
 
 def _go_get_it_buttons(page: Page) -> Locator:

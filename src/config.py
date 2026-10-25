@@ -19,7 +19,9 @@ HANDLED_LABEL = "UARB-handled"  # Gmail label the agent adds to each request onc
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Strip stray spaces and newlines, e.g. from pasting a secret into GitHub. A key with a
+    # trailing newline makes every Claude request fail with a confusing connection error.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", str_strip_whitespace=True)
 
     gmail_address: str = ""
     gmail_app_password: str = ""  # Gmail App Password, not the account password
